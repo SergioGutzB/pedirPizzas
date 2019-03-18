@@ -1,16 +1,28 @@
 'use strict';
+
 const uuidv1 = require('uuid/v1');
 const AWS = require('aws-sdk');
+
+const orderMetadataManager = require('./orderMetadataManager');
 
 var sqs = new AWS.SQS({ region: process.env.REGION });
 const QUEUE_URL = process.env.PENDING_ORDER_QUEUE;
 
 module.exports.hacerPedido = (event, context, callback) => {
-  console.log('hacerPedido');
-  const orderId = uuidv1();
+  console.log('HacerPedido fue llamada');
+
+  const body = JSON.parse(event.body);
+
+  const order = {
+    orderId: uuidv1(),
+    name: body.name,
+    address: body.address,
+    pizzas: body.pizzas,
+    timestamp: Date.now()
+  };
 
   const params = {
-    MessageBody: JSON.stringify({ orderId }),
+    MessageBody: JSON.stringify(order),
     QueueUrl: QUEUE_URL
   };
 
@@ -19,19 +31,57 @@ module.exports.hacerPedido = (event, context, callback) => {
       sendResponse(500, err, callback);
     } else {
       const message = {
-        orderId,
+        order: order,
         messageId: data.MessageId
       };
       sendResponse(200, message, callback);
     }
   });
+};
 
+module.exports.prepararPedido = (event, context, callback) => {
+  console.log('Preparar pedido fue llamada');
+
+  const order = JSON.parse(event.Records[0].body);
+
+  orderMetadataManager
+    .saveCompletedOrder(order)
+    .then(data => {
+      callback();
+    })
+    .catch(error => {
+      callback(error);
+    });
+};
+
+module.exports.enviarPedido = (event, context, callback) => {
+  console.log('enviarPedido fue llamada');
+
+  const record = event.Records[0];
+  if (record.eventName === 'INSERT') {
+    console.log('deliverOrder');
+
+    const orderId = record.dynamodb.Keys.orderId.S;
+
+    orderMetadataManager
+      .deliverOrder(orderId)
+      .then(data => {
+        console.log(data);
+        callback();
+      })
+      .catch(error => {
+        callback(error);
+      });
+  } else {
+    console.log('is not a new record');
+    callback();
+  }
 };
 
 function sendResponse(statusCode, message, callback) {
   const response = {
-    statusCode: 200,
+    statusCode: statusCode,
     body: JSON.stringify(message)
   };
   callback(null, response);
-};
+}
